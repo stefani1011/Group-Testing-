@@ -1,0 +1,57 @@
+source("functions.txt") 
+
+#Read in data and set pool information
+data <- read.csv("Data.csv", header=TRUE)
+N = length(data$Age) 
+J = length(unique(data$Pool.id)) 
+c = N/J 
+cj = rep(c,J) 
+vals = seq(1,N, by=3) 
+C.pool = data$Pool.conc[vals] 
+pool.id = data$Pool.id
+
+Xij<-matrix(NA, nrow=N, ncol=2) 
+Xij[,1]<-rep(1, N)  
+Xij[,2]<-data$Age
+
+theta0 = c(8, 0.1, 3, 4, 0, 0)
+results<-EM(theta0, pool.id, cj, J, C.pool, Xij, method=1)
+
+################################
+#### Summarize results ###### 
+##############################
+
+##Estimation results 
+
+estimation.results=matrix(NA, nrow=2, ncol=length(theta0)) 
+estimation.results[1,]=results$theta.hat
+estimation.results[2,]=results$se.hat 
+
+#Create Table of Estimation Results
+colnames(estimation.results) <- c("alpha_1",  "alpha_0", "beta_0", "beta_1", "b_0", "b_0")
+rownames(estimation.results) <- c("Estimate", "Standard Error")
+
+
+#Create Distribution plots 
+pos.x<-seq(0,15,0.01) 
+neg.x<-seq(0,15,0.01) 
+pos.dist<-dgamma(pos.x, estimation.results[1,1], estimation.results[1,3])
+neg.dist<-dgamma(neg.x, estimation.results[1,2], estimation.results[1,4])
+
+par(mfrow=c(2,1), mar=c(2,2,1,1))
+plot(neg.x,neg.dist, type="l", xlim=c(0,0.4), lwd=2)
+plot(pos.x,pos.dist, type="l",xlim=c(0,8), lwd=2, col="grey")
+
+##Classification results 
+#Summarize thresholds by method 
+thresholds = matrix(NA, nrow=J, ncol=3) 
+thresholds[,1]=rep(results$t0,J) 
+thresholds[,2]=results$t0.cj
+thresholds[,3]=results$tj 
+
+#Summarize diagnoses of pools by method 
+diagnoses = matrix(NA, nrow=J, ncol=3) 
+diagnoses[,1]=results$diagnose.t0
+diagnoses[,2]=results$diagnose.t0.cj
+diagnoses[,3]=results$diagnose.tj 
+

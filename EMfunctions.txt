@@ -1,0 +1,631 @@
+library(numDeriv)
+library(coga)
+
+####Read in data#############
+#First column is age of individual
+#Second column is individual's biomarker concentration level  
+#Third column is an index to group the individuals by pool 
+
+############################################################################
+############################################################################
+###Function to calculate probabilities of n infecteds in a pool
+# Input:
+# n = Number of positives
+# pp = Vector of probabilites
+# Output:
+# res = Probability of observing n positives given the vector of probabilities
+
+pos<-function(n,pp){
+    p.pos<-pp
+    M<-length(pp)
+    p.frac<-pp/(1-pp)
+    if(n==0){
+        res<-prod(1-pp)
+    }
+    if(n>0){
+        if(n==1){
+            res<-sum(p.frac)*prod(1-pp)
+        }
+        if(n>1){
+            temp<-cumsum(p.frac[M:n])
+            temp<-temp[(M-n+1):1]
+            if(n>2){
+                for(i in 1:(n-2)){
+                    temp<-p.frac[(n-i):(M-i)]*temp
+                    temp<-cumsum(temp[(M-n+1):1])
+                    temp<-temp[(M-n+1):1]
+                }
+            }
+            temp<-sum(p.frac[1:(M-n+1)]*temp)
+            res<-temp*prod(1-pp)
+        }
+    }
+    return(res)
+}
+###########################################################################
+##########################################################################
+
+
+###################################
+###########################################################
+log.like<-function(theta3, cj, cpj1, X2, jj, M){
+   
+if(M==0){ 
+    #Calculate distribution for each pool with 0,...,c infecteds
+    Muk <- ((0:cj[jj])*theta3[1]+(cj[jj]:0)*theta3[2])/cj[jj]
+    S2k <- ((0:cj[jj])*theta3[3]+(cj[jj]:0)*theta3[4])/cj[jj]^2
+    Fk  <- matrix(NA,nrow=J,ncol=(cj[jj]+1))
+    Fk<-dnorm(cpj1, Muk, sqrt(S2k))
+} 
+ 
+if(M==1){ 
+    #Calculate distribution for each pool with 0,...,c infecteds
+    
+    Fk  <- matrix(NA,nrow=length(cpj1),ncol=(cj[jj]+1))
+    Fk[, 1] <- dgamma(cpj1, cj[jj]*theta3[2], cj[jj]*theta3[4])
+    Fk[, cj[jj]+1] <- dgamma(cpj1, cj[jj]*theta3[1], cj[jj]*theta3[3])
+    for(i in 1:cj[jj]-1){
+           Fk[,(i+1)]<-dcoga2dim(cpj1, (cj[jj]-i)*theta3[2], i*theta3[1], cj[jj]*theta3[4], cj[jj]*theta3[3])
+    }
+    
+    for(i in 1:dim(Fk)[2]){
+        Fk[is.nan(Fk[,i]),i]<-0
+    }
+}
+    
+    	L = sum(cj[1:jj])-cj[jj]+1
+	U = sum(cj[1:jj]) 
+    #calculate pij's
+    b4<-theta3[5:length(theta3)]
+    pij4<-(exp(X2%*%b4)/(1+exp(X2%*%b4)))[(L:U),]
+    
+    ##Calculate probability each pool contains k infecteds, k=0,..,c
+    p4<-c()
+    for(i in 0:cj[jj]){
+        p4[i+1]<-pos(i, pij4)
+    }
+    #print(p4)
+    
+    
+    #Calculate log likelihood function
+    mat1<-Fk*p4
+    #print(mat1)
+    
+    sum2<-sum(mat1)
+    sum3<-log(sum2)
+    res<-sum3
+}
+
+###################################################################################
+###################################################################################
+#######################  Set thresholds for classification  #######################
+###################################################################################
+###################################################################################
+
+###Function to determine the threshold on a pool-by-pool basis
+#Using threshold using Wang et al.
+pool.t0 <- function(t0s, theta.s, c.s, pij6, p6, method){
+if(method==0){
+    #Determine distribution of the pool
+    Muk1 <- ((0:c.s)*theta.s[1]+(c.s:0)*theta.s[2])/c.s
+    S2k1 <- ((0:c.s)*theta.s[3]+(c.s:0)*theta.s[4])/c.s^2
+    
+    #Compute specificity and sensitivity
+    spj1 <- pnorm(t0s, Muk1[1], sqrt(S2k1[1]))
+    
+    secj1<-rep(NA, 1)
+    pz11 <- 1-prod(1-pij6)
+    wj1 <- p6[2]/pz11
+    secj1<- wj1*(1-pnorm(t0s, Muk1[2], sqrt(S2k1[2])))
+    sej1 <- sum(secj1)
+    val <- -(sej1+spj1-1)
+} 
+
+if(method==1){ 
+    #Compute specificity and sensitivity
+    spj <- pgamma(t0s, c.s*theta.s[2], c.s*theta.s[4])
+    
+    secj<-rep(NA, 1)
+    pz1 <- 1-prod(1-pij6)
+    wj <- p6[2]/pz1
+    secj<-wj*(1-pcoga2dim(t0s, (c.s-1)*theta.s[2], 1*theta.s[1], c.s*theta.s[4], c.s*theta.s[3]))
+    sej <- sum(secj)
+    val <- -(sej+spj-1)
+}
+return(val) 
+} 
+
+##Function to set the individual threshold using Youden's index 
+ind.t0 <- function(t0.t, thetaa, method){
+if(method==0){ 
+    spj = pnorm(t0.t, thetaa[2] ,sqrt(thetaa[4]))
+    sej = 1-pnorm(t0.t, thetaa[1], sqrt(thetaa[3]))
+    yod = -(spj+sej-1)
+} 
+
+if(method==1){ 
+    spj = pgamma(t0.t, thetaa[2] ,thetaa[4])
+    sej = 1-pgamma(t0.t, thetaa[1], thetaa[3])
+    yod = -(spj+sej-1)
+} 
+return(yod) 
+}
+
+
+
+###########################################################
+#############EM Algorithm for Underlying Gamma#############
+###########################################################
+##EM Algorithm Function
+#theta0 initial guess for algorithm
+#c is pool size
+#J is number of pools
+#C.pool is a vector of pool concentrations
+#X is a N by r matrix of covariates
+
+
+EM<-function(theta0, pool.id, cj, J, C.pool, Xij, method){
+N = dim(Xij)[1] 
+
+#reorder individuals by pool for the algorithm 
+up=0 
+X=matrix(NA, nrow=N, ncol=ncol(Xij)) 
+for(j in 1:J){ 
+        low<-up+1
+        up<-up+cj[j]
+	id = which(pool.id == j) 
+	X[low:up,] = Xij[id,]
+} 
+
+
+if(method==0){ ##use normal model 
+    #Calculate pij with initialization
+    b1<-theta0[5:length(theta0)]
+    pij1<-exp(X%*%b1)/(1+exp(X%*%b1))
+    pij1m<-matrix(NA, nrow=J, ncol=max(cj))
+    up<-0
+    for(j in 1:J){
+        cp<-cj[j]
+        low<-up+1
+        up<-up+cp
+        pij1m[j, 1:cp]<-pij1[low:up]
+        
+    }
+    
+    
+    #Find distributions for each pool with 0,...,c infecteds
+    fkd  <- matrix(NA,nrow=J,ncol=(max(cj)+1))
+    for(j in 1:J){
+        cp<-cj[j]
+        mukd <- ((0:cp)*theta0[1]+(cp:0)*theta0[2])/(cp)
+        s2kd <- ((0:cp)*theta0[3]+(cp:0)*theta0[4])/(cp)^2
+        fkd[j,1:(cp+1)]<-dnorm(C.pool[j], mukd[1:(cp+1)], sqrt(s2kd[1:(cp+1)]))
+    }
+    
+    ##Calculate probability each pool contains k infecteds, k=0,..,c
+    p<-matrix(NA, nrow=J, ncol=(max(cj)+1))
+    
+    for(j in 1:J){
+        cp<-cj[j]
+        for(i in 0:cp){
+            p[j,i+1]<-pos(i, pij1m[j,(1:cp)])
+        }
+    }
+    
+    #Calculate expected value of indicator
+    mult<-fkd*p
+    denom<-apply(mult, 1, sum, na.rm=TRUE)
+    EIk<-mult/denom
+    
+    #Calculate expected value of each individual
+    EYm<-matrix(NA, nrow=J, ncol=max(cj))
+    for(j in 1:J){
+        cp<-cj[j]
+        tau<-rep(NA, cp-1)
+        for(i in 1:cp){
+            for(k in 0:(cp-1)){
+                p.temp<-pij1m[j, (1:cp)]
+                tau[k+1]<-pos(k, p.temp[-i]) }
+            fkd.temp<-fkd[j, 1:(cp+1)]
+            aa1<-pij1m[j,i]*sum(fkd.temp[-1]*tau)
+            bb1<-(1-pij1m[j,i])*sum(fkd.temp[-(cp+1)]*tau)
+            EYm[j,i]<-aa1/(aa1+bb1)
+        }
+    }
+    
+    
+    ################################################
+    # M-step
+    theta1<-theta0
+    
+    #Optimize distribution parameters
+    Q.obj<-function(param,Cpj,A,cc){
+        #print(param)
+        J<-length(Cpj)
+        Cmat<-matrix(NA, nrow=J, ncol=(max(cc)+1))
+        mat<-matrix(NA, nrow=J, ncol=(max(cc)+1))
+        for(j in 1:J){
+            cp<-cj[j]
+            muk <- ((0:cp)*param[1]+(cp:0)*param[2])/(cp)
+            s2k <- ((0:cp)*param[3]+(cp:0)*param[4])/(cp)^2
+            Cmat[j, 1:(cp+1)]<-Cpj[j]
+            mat[j, 1:(cp+1)]<-t((-(t(Cmat[j, 1:(cp+1)])-muk[1:(cp+1)])^2)/(2*s2k[1:(cp+1)])-log(sqrt(s2k[1:(cp+1)])))
+        }
+        res<--sum(A*mat, na.rm=TRUE)
+        return(res)
+    }
+    
+    #optimize beta parameters
+    beta<-function(b2, EV, Xij2){
+        #print(b2)
+        pij3<-exp(Xij2%*%b2)/(1+exp(Xij2%*%b2))
+        ps<-matrix(NA, nrow=J, ncol=max(cj))
+        up1<-0
+        for(j in 1:J){
+            cp<-cj[j]
+            low1<-up1+1
+            up1<-up1+cp
+            ps[j,1:cp]<-pij3[low1:up1]
+        }
+        prod1<-EV*log(ps)
+        prod2<-(1-EV)*log(1-ps)
+        q1<-apply(prod1, 1, sum, na.rm=TRUE)
+        q2<-apply(prod2, 1 ,sum, na.rm=TRUE)
+        q<-sum(q1)+sum(q2)
+        res2<--q
+    }
+    
+    res<-constrOptim(theta0[1:4],Q.obj, grad=NULL, ui=rbind(c(1,-1,0,0), c(0,1,0,0), c(0,0,1,0), c(0,0,0,1)), ci=c(0,-1000,0.01,0.01), method="Nelder-Mead", Cpj=C.pool,A=EIk,cc=cj)
+    theta1[1:4]<-res$par
+    
+    res2<-optim(par=theta0[5:length(theta0)], beta, method="Nelder-Mead",  Xij2=X, EV=EYm)
+    theta1[5:length(theta0)]<-res2$par
+    
+    ###################################################
+    #Iterate until convergence
+    tol<-0.0000001
+    
+    while(max(abs(theta1-theta0))>tol){
+        theta0<-theta1
+        
+        #Update pij
+        b3<-theta0[5:length(theta0)]
+        pij2<-exp(X%*%b3)/(1+exp(X%*%b3))
+        pij2m<-matrix(NA, nrow=J, ncol=max(cj))
+        up2<-0
+        for(j in 1:J){
+            cp<-cj[j]
+            low2<-up2+1
+            up2<-up2+cp
+            pij2m[j, 1:cp]<-pij2[low2:up2]
+            
+        }
+        
+        #Update distributions for each pool with 0,...,c infecteds
+        fkd2  <- matrix(NA,nrow=J,ncol=(max(cj)+1))
+        for(j in 1:J){
+            cp<-cj[j]
+            mukd2 <- ((0:cp)*theta0[1]+(cp:0)*theta0[2])/cp
+            s2kd2 <- ((0:cp)*theta0[3]+(cp:0)*theta0[4])/(cp)^2
+            fkd2[j,1:(cp+1)]<-dnorm(C.pool[j], mukd2[1:(cp+1)], sqrt(s2kd2[1:(cp+1)]))
+        }
+        
+        
+        ##Calculate probability each pool contains k infecteds, k=0,..,c
+        p2<-matrix(NA, nrow=J, ncol=(max(cj)+1))
+        
+        for(j in 1:J){
+            cp<-cj[j]
+            for(i in 0:cp){
+                p2[j,i+1]<-pos(i, pij2m[j,(1:cp)])
+            }
+        }
+        
+        #Update expected value of indicator
+        mult2<-fkd2*p2
+        denom2<-apply(mult2, 1, sum, na.rm=TRUE)
+        EIk2<-mult2/denom2 # a_jk
+        
+        #Update expected value of individuals
+        EYm2<-matrix(NA, nrow=J, ncol=max(cj))
+        for(j in 1:J){
+            cp<-cj[j]
+            tau2<-rep(NA, (cp-1))
+            for(i in 1:cp){
+                for(k in 0:(cp-1)){
+                    p.temp2<-pij2m[j, (1:cp)]
+                    tau2[k+1]<-pos(k, p.temp2[-i]) }
+                fkd2.temp<-fkd2[j, 1:(cp+1)]
+                aa12<-pij2m[j,i]*sum(fkd2.temp[-1]*tau2)
+                bb12<-(1-pij2m[j,i])*sum(fkd2.temp[-(cp+1)]*tau2)
+                EYm2[j,i]<-aa12/(aa12+bb12)
+            }
+        }
+        
+        #optimize distribution parameters
+        res<-constrOptim(theta0[1:4],Q.obj, grad=NULL, ui=rbind(c(1,-1,0,0), c(0,1,0,0), c(0,0,1,0), c(0,0,0,1)), ci=c(0,-1000,0.01,0.01), method="Nelder-Mead", Cpj=C.pool, A=EIk2, cc=cj)
+        theta1[1:4]<-res$par
+        
+        #update beta parameters
+        res2<-optim(par=theta0[5:length(theta0)], beta, method="Nelder-Mead", Xij2=X, EV=EYm2)
+        theta1[5:length(theta0)]<-res2$par
+        
+        #print(theta1)
+    }
+} 
+
+
+if(method==1){     ##use gamma model 
+    #####################################
+    ###E-step
+    
+    #Calculate pij with initialization
+    b1<-theta0[5:length(theta0)]
+    pij1<-exp(X%*%b1)/(1+exp(X%*%b1))
+    pij1m<-matrix(NA, nrow=J, ncol=max(cj))
+    up<-0
+    for(j in 1:J){
+        cp<-cj[j]
+        low<-up+1
+        up<-up+cp
+        pij1m[j, 1:cp]<-pij1[low:up]
+        
+    }
+    
+    
+    #Find distributions for each pool with 0,...,c infecteds
+    fkd<-matrix(NA, nrow=J, ncol=(max(cj)+1))
+    
+    for(i in 1:max(cj)){
+        fkd[cj==i, 1] <- dgamma(C.pool[cj==i], i*theta0[2], i*theta0[4])
+        fkd[cj==i, i+1] <- dgamma(C.pool[cj==i], i*theta0[1], i*theta0[3])
+        for(j in 1:i-1){
+            fkd[cj==i,(j+1)]<-dcoga2dim(C.pool[cj==i], (i-j)*theta0[2], j*theta0[1],  i*theta0[4], i*theta0[3])
+        }
+    }
+    
+    #Set NaN to 0
+    for(i in 1:dim(fkd)[2]){
+        fkd[is.nan(fkd[,i]),i]<-0
+    }
+    
+    ##Calculate probability each pool contains k infecteds, k=0,..,c
+    p<-matrix(NA, nrow=J, ncol=(max(cj)+1))
+    
+    for(j in 1:J){
+        cp<-cj[j]
+        for(i in 0:cp){
+            p[j,i+1]<-pos(i, pij1m[j,(1:cp)])
+        }
+    }
+    
+    #Calculate expected value of indicator
+    mult<-fkd*p
+    denom<-apply(mult, 1, sum, na.rm=TRUE)
+    EIk<-mult/denom
+    
+    #Calculate expected value of each individual
+    EYm<-matrix(NA, nrow=J, ncol=max(cj))
+    for(j in 1:J){
+        cp<-cj[j]
+        tau<-rep(NA, cp-1)
+        for(i in 1:cp){
+            for(k in 0:(cp-1)){
+                p.temp<-pij1m[j, (1:cp)]
+                tau[k+1]<-pos(k, p.temp[-i])
+            }
+            fkd.temp<-fkd[j, 1:(cp+1)]
+            aa1<-pij1m[j,i]*sum(fkd.temp[-1]*tau)
+            bb1<-(1-pij1m[j,i])*sum(fkd.temp[-(cp+1)]*tau)
+            EYm[j,i]<-aa1/(aa1+bb1)
+        }
+    }
+    
+    
+    ################################################
+    # M-step
+    theta1<-theta0
+    
+    #Optimize distribution parametrs
+    Q.obj<-function(param,Cpj,A,cc){
+        #print(param)
+        param2<-exp(param)
+        J<-length(Cpj)
+        
+        fk<-matrix(NA, nrow=J, ncol=(max(cc)+1))
+        for(i in 1:max(cc)){
+            fk[cc==i, 1] <- dgamma(Cpj[cc==i], i*param2[2], i*param2[4])
+            fk[cc==i, i+1] <- dgamma(Cpj[cc==i], i*param2[1], i*param2[3])
+            for(j in 1:i-1){
+                fk[cc==i,(j+1)]<-dcoga2dim(Cpj[cc==i],  (i-j)*param2[2], j*param2[1], i*param2[4], i*param2[3])
+            }
+        }
+        for(i in 1:dim(fk)[2]){
+            fk[is.nan(fk[,i]),i]<-0
+        }
+        mat<-log(fk)
+        Amat<-A*mat
+        res<--sum(A*mat, na.rm=TRUE)
+        return(res)
+    }
+    
+    #optimize beta parameters
+    beta<-function(b2, EV, Xij2){
+        #print(b2)
+        pij3<-exp(Xij2%*%b2)/(1+exp(Xij2%*%b2))
+        ps<-matrix(NA, nrow=J, ncol=max(cj))
+        up1<-0
+        for(j in 1:J){
+            cp<-cj[j]
+            low1<-up1+1
+            up1<-up1+cp
+            ps[j,1:cp]<-pij3[low1:up1]
+        }
+        prod1<-EV*log(ps)
+        prod2<-(1-EV)*log(1-ps)
+        q1<-apply(prod1, 1, sum, na.rm=TRUE)
+        q2<-apply(prod2, 1 ,sum, na.rm=TRUE)
+        q<-sum(q1)+sum(q2)
+        res2<--q
+    }
+    
+    res<-constrOptim(log(theta0[1:4]),Q.obj, grad=NULL, ui=rbind(c(1, -1, -1, 1)), ci=c(0), method="Nelder-Mead", Cpj=C.pool,A=EIk,cc=cj)
+    theta1[1:4]<-exp(res$par)
+    
+    res2<-optim(par=theta0[5:length(theta0)], beta, method="Nelder-Mead",  Xij2=X, EV=EYm)
+    theta1[5:length(theta0)]<-res2$par
+    
+    
+    ###################################################
+    #Iterate until convergence
+    tol<-0.0000001
+    
+    while(max(abs(theta1-theta0))>tol){
+        theta0<-theta1
+        
+        #Update distributions for each pool with 0,...,c infecteds
+        fkd2  <- matrix(NA,nrow=J,ncol=(max(cj)+1))
+        for(i in 1:max(cj)){
+            fkd2[cj==i, 1] <- dgamma(C.pool[cj==i], i*theta0[2], i*theta0[4])
+            fkd2[cj==i, i+1] <- dgamma(C.pool[cj==i], i*theta0[1], i*theta0[3])
+            for(j in 1:i-1){
+                fkd2[cj==i,(j+1)]<-dcoga2dim(C.pool[cj==i], (i-j)*theta0[2], j*theta0[1], i*theta0[4], i*theta0[3])
+            }
+        }
+        for(i in 1:dim(fkd2)[2]){
+            fkd2[is.nan(fkd2[,i]),i]<-0
+        }
+        
+        #Update pij
+        b3<-theta0[5:length(theta0)]
+        pij2<-exp(X%*%b3)/(1+exp(X%*%b3))
+        pij2m<-matrix(NA, nrow=J, ncol=max(cj))
+        up2<-0
+        for(j in 1:J){
+            cp<-cj[j]
+            low2<-up2+1
+            up2<-up2+cp
+            pij2m[j, 1:cp]<-pij2[low2:up2]
+        }
+        
+        
+        ##Calculate probability each pool contains k infecteds, k=0,..,c
+        p2<-matrix(NA, nrow=J, ncol=(max(cj)+1))
+        for(j in 1:J){
+            cp<-cj[j]
+            for(i in 0:cp){
+                p2[j,i+1]<-pos(i, pij2m[j,(1:cp)])
+            }
+        }
+        
+        #Update expected value of indicator
+        mult2<-fkd2*p2
+        denom2<-apply(mult2, 1, sum, na.rm=TRUE)
+        EIk2<-mult2/denom2 # a_jk
+        
+        #Update expected value of individuals
+        EYm2<-matrix(NA, nrow=J, ncol=max(cj))
+        for(j in 1:J){
+            cp<-cj[j]
+            tau2<-rep(NA, (cp-1))
+            for(i in 1:cp){
+                for(k in 0:(cp-1)){
+                    p.temp2<-pij2m[j, (1:cp)]
+                    tau2[k+1]<-pos(k, p.temp2[-i])
+                }
+                fkd2.temp<-fkd2[j, 1:(cp+1)]
+                aa12<-pij2m[j,i]*sum(fkd2.temp[-1]*tau2)
+                bb12<-(1-pij2m[j,i])*sum(fkd2.temp[-(cp+1)]*tau2)
+                EYm2[j,i]<-aa12/(aa12+bb12)
+            }
+        }
+        
+        #optimize distribution parameters
+        #Constrained optimization wrt alpha and beta
+        res<-constrOptim(log(theta0[1:4]),Q.obj, grad=NULL, ui=rbind(c(1, -1, -1, 1)), ci=c(0), method="Nelder-Mead", Cpj=C.pool,A=EIk2,cc=cj)
+        theta1[1:4]<-exp(res$par)
+        
+        #update beta parameters
+        res2<-optim(par=theta0[5:length(theta0)], beta, method="Nelder-Mead", Xij2=X, EV=EYm2)
+        theta1[5:length(theta0)]<-res2$par
+        
+        #print(theta1)
+
+    }
+    } 
+
+
+theta.hat = theta1
+
+#######################################
+###Estimate standard errors ###########
+####################################### 
+#Build Bn matrix
+grad<-matrix(NA, nrow=J, ncol=length(theta.hat))
+store<-array(NA, c(length(theta.hat), length(theta.hat), J))
+
+for(j in 1:J){
+grad[j,]<-grad(log.like, theta.hat, cj=cj, cpj1=C.pool[j], X2=X, jj=j, M=method) 
+store[1:length(theta.hat), 1:length(theta.hat), j]<-grad[j,]%*%t(grad[j,])
+}
+
+#Calculate the Variance
+Bn<-apply(store, c(1,2), sum)
+Var.hat<-solve(Bn)
+sd.hat<-sqrt(diag(Var.hat))
+
+
+###################################
+### Classify pools ############### 
+#################################
+    ###Sensitivity and specificity    
+    cs<-max(cj)
+    #calculate pij's
+    b6s<-theta.hat[5:length(theta.hat)]
+    pij6<-exp(X%*%b6s)/(1+exp(X%*%b6s))
+    
+    pij6m<-matrix(NA, nrow=J, ncol=cs)
+    up5<-0
+    for(j in 1:J){
+        low5<-up5+1
+        up5<-up5+cj[j]
+        pij6m[j, 1:cj[j]]<-pij6[low5:up5]
+    }
+    
+    
+    ##Calculate probability each pool contains k infecteds, k=0,..,c
+    p6s<-matrix(NA, nrow=J, ncol=cs+1)
+    for(j in 1:J){
+        for(k in 0:cj[j]){
+            p6s[j,k+1]<-pos(k, pij6m[j,(1:cj[j])])
+        }
+    }
+
+    ####Find optimal threshold on pool-by-pool basis using Wang et al. (2018) threshold #########
+    t022 <- rep(NA, J)
+    for(j in 1:J){
+        ress2 <- optimize(pool.t0, c(0,3),theta.s=theta.hat, c.s=cj[j], pij6=pij6m[j,1:cj[j]], p6=p6s[j,1:(cj[j]+1)], method=method, tol=1e-32)
+        t022[j]<-ress2$minimum
+    }
+    
+     
+    ###############################################
+    ##Compare to individual testing
+    t0.ind <- optimize(ind.t0, c(0,10), thetaa=theta.hat, method=method)$min
+    
+    ##Compare to using t0/c as threshold
+    t0.pool2=rep(NA,J)
+    for(j in 1:J){ 
+   	 t0.pool2[j] <- t0.ind/cj[j]
+    } 
+   
+    
+    
+    ##################################################
+    #Diagnose each pool using the above thresholds 
+    diagnose.ind <- as.numeric(C.pool>t0.ind)
+    diagnose.pool2 <- as.numeric(C.pool>t0.pool2)
+    diagnose.pool3 <- as.numeric(C.pool>t022)
+
+    return(list("theta.hat"=theta.hat, "se.hat"=sd.hat, "t0"=t0.ind, "t0.cj" = t0.pool2, "tj" = t022, "diagnose.t0"=diagnose.ind, "diagnose.t0.cj" = diagnose.pool2, "diagnose.tj"=diagnose.pool3))
+}
