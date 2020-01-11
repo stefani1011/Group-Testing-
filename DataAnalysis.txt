@@ -1,4 +1,4 @@
-source("functions.txt") 
+source("EMfunctions.txt") 
 
 #Read in data and set pool information
 data <- read.csv("Data.csv", header=TRUE)
@@ -49,9 +49,12 @@ thresholds[,1]=rep(results$t0,J)
 thresholds[,2]=results$t0.cj
 thresholds[,3]=results$tj 
 
+colnames(thresholds) <- c("t_0", "t_0/c_j", "t_j")
+
 #Summarize diagnoses of pools by method 
 diagnoses = matrix(NA, nrow=J, ncol=3) 
 diagnoses[,1]=results$diagnose.t0
 diagnoses[,2]=results$diagnose.t0.cj
 diagnoses[,3]=results$diagnose.tj 
 
+colnames(diagnoses) <- c("t_0", "t_0/c_j", "t_j")

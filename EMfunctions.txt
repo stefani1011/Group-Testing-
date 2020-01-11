@@ -627,5 +627,24 @@ sd.hat<-sqrt(diag(Var.hat))
     diagnose.pool2 <- as.numeric(C.pool>t0.pool2)
     diagnose.pool3 <- as.numeric(C.pool>t022)
 
+#Create Table of Estimation Results
+estimation.results = matrix(NA, nrow=2, ncol=length(theta.hat)) 
+estimation.results[1,]=theta.hat 
+estimation.results[2,]=sd.hat 
+colnames(estimation.results) <- c("alpha_1",  "alpha_0", "beta_0", "beta_1", "b_0", "b_0")
+rownames(estimation.results) <- c("Estimate", "Standard Error")
+
+print(estimation.results) 
+
+#Summarize diagnoses of pools by method 
+diagnoses = matrix(NA, nrow=J, ncol=3) 
+diagnoses[,1]=diagnose.ind
+diagnoses[,2]=diagnose.pool2
+diagnoses[,3]=diagnose.pool3
+
+colnames(diagnoses) <- c("t_0", "t_0/c_j", "t_j")
+
+print(head(diagnoses))
+
     return(list("theta.hat"=theta.hat, "se.hat"=sd.hat, "t0"=t0.ind, "t0.cj" = t0.pool2, "tj" = t022, "diagnose.t0"=diagnose.ind, "diagnose.t0.cj" = diagnose.pool2, "diagnose.tj"=diagnose.pool3))
 }
